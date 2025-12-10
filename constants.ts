@@ -1,7 +1,7 @@
 import { ChartOfAccountItem, BudgetLine } from './types';
 
 // Processed from the provided CSV data
-export const CHART_OF_ACCOUNTS: ChartOfAccountItem[] = [
+export const DEFAULT_CHART_OF_ACCOUNTS: ChartOfAccountItem[] = [
   { code: '1.2', category: 'Local Employees' },
   { code: '1.3 a', category: 'Canadian and International Subcontractors' },
   { code: '1.4 b', category: 'Local Sub-Contractors' },
@@ -114,8 +114,9 @@ export const CHART_OF_ACCOUNTS: ChartOfAccountItem[] = [
   // Non-Expense codes
   { code: 'INCOME_GRANT', category: 'Grant Income' },
   { code: 'INCOME_DONATION', category: 'Private Donations' },
+  { code: 'OPENING', category: 'Opening Balance / Carry Forward' },
 ];
 
-export const MOCK_BUDGET: BudgetLine[] = CHART_OF_ACCOUNTS
+export const MOCK_BUDGET: BudgetLine[] = DEFAULT_CHART_OF_ACCOUNTS
   .filter(c => !c.isHeader)
   .map(c => ({ code: c.code, monthlyBudget: Math.floor(Math.random() * 5000) + 100 }));

@@ -10,6 +10,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     { label: 'Accounts Payable/Receivable', path: '/ap-ar' },
     { label: 'Reconciliation', path: '/reconciliation' },
     { label: 'Reports', path: '/reports' },
+    { label: 'Settings', path: '/settings' },
   ];
 
   return (
@@ -44,10 +45,10 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         <div className="p-4 border-t border-slate-800">
           <div className="flex items-center space-x-3">
             <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center font-bold">
-              FM
+              FA
             </div>
             <div>
-              <p className="text-sm font-medium">Finance Manager</p>
+              <p className="text-sm font-medium">F & A Director</p>
               <p className="text-xs text-slate-400">admin@ngo.org</p>
             </div>
           </div>

@@ -1,7 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useFinance } from '../context/FinanceContext';
 import { TransactionType, BudgetLine, TransactionStatus } from '../types';
-import { CHART_OF_ACCOUNTS } from '../constants';
 import { analyzeVariance } from '../services/geminiService';
 
 enum ReportType {
@@ -12,7 +11,7 @@ enum ReportType {
 }
 
 export const Reports: React.FC = () => {
-    const { transactions, budget, updateBudget } = useFinance();
+    const { transactions, budget, updateBudget, chartOfAccounts } = useFinance();
     const [activeTab, setActiveTab] = useState<ReportType>(ReportType.VARIANCE);
     const [aiAnalysis, setAiAnalysis] = useState<string>("");
     const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -46,17 +45,26 @@ export const Reports: React.FC = () => {
         return Math.max(months + 1, 1); // At least 1 month
     }, [dateRange]);
 
+    // Helpers
+    const isIncomeType = (type: TransactionType) => type === TransactionType.INCOME || type === TransactionType.CONT;
+    const isOpeningType = (type: TransactionType) => type === TransactionType.OPENING;
+    // Strict definition per user request: ADV, WHT, NB, etc are NOT expenses in reports
+    const isExpenseType = (type: TransactionType) => type === TransactionType.EXPENSE;
+    const isLiabilityType = (type: TransactionType) => 
+        type === TransactionType.ITAX || type === TransactionType.WHT || type === TransactionType.SSEC || type === TransactionType.NB;
+
     // -- Data Aggregation Logic --
     
     // Budget vs Actuals Data
+    // Exclude OPENING, ADV, WHT etc from Actuals
     const budgetVsActualsData = useMemo(() => {
-        return CHART_OF_ACCOUNTS.filter(c => !c.isHeader).map(cat => {
+        return chartOfAccounts.filter(c => !c.isHeader).map(cat => {
             // Filter actuals by date range
-            // Treat EXPENSE, ADV, TRF as actual spend for budget tracking
+            // Treat ONLY TransactionType.EXPENSE as "Actual Spend"
             const actual = transactions
                 .filter(t => {
                     return t.accountCode === cat.code && 
-                           (t.type === TransactionType.EXPENSE || t.type === TransactionType.ADV || t.type === TransactionType.TRF) &&
+                           isExpenseType(t.type) &&
                            t.date >= dateRange.start && 
                            t.date <= dateRange.end;
                 })
@@ -76,38 +84,40 @@ export const Reports: React.FC = () => {
                 variancePercent: totalBudget > 0 ? ((totalBudget - actual) / totalBudget) * 100 : 0
             };
         }).sort((a,b) => (Math.abs(a.variance) > Math.abs(b.variance) ? -1 : 1));
-    }, [transactions, budget, dateRange, monthDiff]);
+    }, [transactions, budget, dateRange, monthDiff, chartOfAccounts]);
 
     // Trial Balance Data
+    // Include all flows
     const trialBalanceData = useMemo(() => {
-        const items = CHART_OF_ACCOUNTS.map(account => {
+        const items = chartOfAccounts.map(account => {
             if (account.isHeader) {
                 return { ...account, debit: 0, credit: 0, isHeader: true };
             }
 
             const txs = transactions.filter(t => t.accountCode === account.code);
-            // In general accounting:
-            // Expenses & Assets = Debit (Dr)
-            // Income & Liabilities = Credit (Cr)
             
-            // For this system:
-            // EXPENSE, ADV, TRF transactions are Debits
-            // INCOME transactions are Credits
+            // Expenses & Other Outflows (Assets/Liabilities paid) are Debits
+            const totalDebits = txs.filter(t => 
+                t.type === TransactionType.EXPENSE || 
+                t.type === TransactionType.ADV || 
+                t.type === TransactionType.PCA ||
+                t.type === TransactionType.NB ||
+                t.type === TransactionType.TRF ||
+                t.type === TransactionType.ITAX || // Assuming payment of tax
+                t.type === TransactionType.WHT ||
+                t.type === TransactionType.SSEC
+            ).reduce((sum, t) => sum + t.amount, 0);
             
-            const totalExpense = txs.filter(t => t.type === TransactionType.EXPENSE || t.type === TransactionType.ADV || t.type === TransactionType.TRF).reduce((sum, t) => sum + t.amount, 0);
-            const totalIncome = txs.filter(t => t.type === TransactionType.INCOME).reduce((sum, t) => sum + t.amount, 0);
-            
-            // Calculate Net
-            // If Expenses > Income => Net Debit
-            // If Income > Expenses => Net Credit
+            // Income and Opening are Credits
+            const totalCredits = txs.filter(t => isIncomeType(t.type) || isOpeningType(t.type)).reduce((sum, t) => sum + t.amount, 0);
             
             let debit = 0;
             let credit = 0;
             
-            if (totalExpense > totalIncome) {
-                debit = totalExpense - totalIncome;
+            if (totalDebits > totalCredits) {
+                debit = totalDebits - totalCredits;
             } else {
-                credit = totalIncome - totalExpense;
+                credit = totalCredits - totalDebits;
             }
 
             return {
@@ -122,29 +132,30 @@ export const Reports: React.FC = () => {
         const totalCredits = items.reduce((sum, item) => sum + item.credit, 0);
 
         return { items, totalDebits, totalCredits };
-    }, [transactions]);
+    }, [transactions, chartOfAccounts]);
 
     // Bank Reconciliation Data
+    // Ledger Balance must include ALL transactions that affect cash
     const bankRecData = useMemo(() => {
         const endDate = dateRange.end;
 
         // 1. Transactions up to the report date
         const relevantTransactions = transactions.filter(t => t.date <= endDate);
 
-        // 2. Ledger Balance Calculation
+        // 2. Ledger Balance Calculation (Includes everything affecting cash)
         const ledgerBalance = relevantTransactions.reduce((acc, t) => {
-            if (t.type === TransactionType.INCOME) return acc + t.amount;
-            // Subtract expenses, adv, trf
-            if (t.type === TransactionType.EXPENSE || t.type === TransactionType.ADV || t.type === TransactionType.TRF) return acc - t.amount;
-            return acc;
+            if (isIncomeType(t.type) || isOpeningType(t.type)) return acc + t.amount;
+            return acc - t.amount;
         }, 0);
 
         // 3. Unreconciled Items (Status != RECONCILED)
         const unreconciled = relevantTransactions.filter(t => t.status !== TransactionStatus.RECONCILED);
         const reconciled = relevantTransactions.filter(t => t.status === TransactionStatus.RECONCILED);
 
-        const unpresentedCheques = unreconciled.filter(t => t.type === TransactionType.EXPENSE || t.type === TransactionType.ADV || t.type === TransactionType.TRF);
-        const outstandingDeposits = unreconciled.filter(t => t.type === TransactionType.INCOME);
+        // Unpresented Cheques (All outflows)
+        const unpresentedCheques = unreconciled.filter(t => !isIncomeType(t.type) && !isOpeningType(t.type));
+        // Outstanding Deposits (All inflows)
+        const outstandingDeposits = unreconciled.filter(t => isIncomeType(t.type) || isOpeningType(t.type));
 
         const totalUnpresented = unpresentedCheques.reduce((sum, t) => sum + t.amount, 0);
         const totalOutstanding = outstandingDeposits.reduce((sum, t) => sum + t.amount, 0);
@@ -184,8 +195,8 @@ export const Reports: React.FC = () => {
             headers = ['Code', 'Category', 'Actual', 'Pro-rated Budget', 'Variance', 'Variance %'];
             rows = budgetVsActualsData.map(v => [v.code, v.category, v.actual, v.budget, v.variance, v.variancePercent.toFixed(2)]);
         } else if (activeTab === ReportType.INCOME_STATEMENT) {
-             const income = transactions.filter(t => t.type === TransactionType.INCOME).reduce((s,t) => s+t.amount, 0);
-             const expense = transactions.filter(t => t.type === TransactionType.EXPENSE || t.type === TransactionType.ADV || t.type === TransactionType.TRF).reduce((s,t) => s+t.amount, 0);
+             const income = transactions.filter(t => isIncomeType(t.type)).reduce((s,t) => s+t.amount, 0);
+             const expense = transactions.filter(t => isExpenseType(t.type)).reduce((s,t) => s+t.amount, 0);
              headers = ['Item', 'Amount'];
              rows = [['Total Income', income], ['Total Expense', expense], ['Net Result', income-expense]];
         } else if (activeTab === ReportType.TRIAL_BALANCE) {
@@ -279,7 +290,7 @@ export const Reports: React.FC = () => {
                         Export CSV
                     </button>
                     <button onClick={handlePrint} className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm hover:bg-slate-900 flex items-center gap-2">
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="w-4 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
                         </svg>
                         Print / Save PDF
@@ -402,7 +413,7 @@ export const Reports: React.FC = () => {
                                 <span>INCOME</span>
                                 <span>Amount (GHS)</span>
                             </div>
-                            {transactions.filter(t => t.type === TransactionType.INCOME).map(t => (
+                            {transactions.filter(t => isIncomeType(t.type)).map(t => (
                                 <div key={t.id} className="flex justify-between text-gray-600 pl-4 print:text-black">
                                     <span>{t.accountCode} - {t.description}</span>
                                     <span>{formatCurrency(t.amount)}</span>
@@ -410,7 +421,7 @@ export const Reports: React.FC = () => {
                             ))}
                             <div className="flex justify-between font-bold text-lg pt-4">
                                 <span>Total Income</span>
-                                <span className="text-blue-600 print:text-black">{formatCurrency(transactions.filter(t => t.type === TransactionType.INCOME).reduce((s, t) => s + t.amount, 0))}</span>
+                                <span className="text-blue-600 print:text-black">{formatCurrency(transactions.filter(t => isIncomeType(t.type)).reduce((s, t) => s + t.amount, 0))}</span>
                             </div>
 
                             <div className="flex justify-between font-bold text-lg border-b border-gray-300 pb-2 mt-8">
@@ -425,17 +436,22 @@ export const Reports: React.FC = () => {
                             ))}
                              <div className="flex justify-between font-bold text-lg pt-4">
                                 <span>Total Expenditure</span>
-                                <span className="text-orange-600 print:text-black">{formatCurrency(transactions.filter(t => t.type === TransactionType.EXPENSE || t.type === TransactionType.ADV || t.type === TransactionType.TRF).reduce((s, t) => s + t.amount, 0))}</span>
+                                <span className="text-orange-600 print:text-black">{formatCurrency(transactions.filter(t => isExpenseType(t.type)).reduce((s, t) => s + t.amount, 0))}</span>
                             </div>
 
                              <div className="flex justify-between font-bold text-xl pt-8 border-t-2 border-gray-800 mt-8">
                                 <span>Net Surplus / (Deficit)</span>
                                 <span className={
-                                    (transactions.reduce((acc, t) => t.type === TransactionType.INCOME ? acc + t.amount : acc - t.amount, 0)) >= 0 ? 'text-green-600 print:text-black' : 'text-red-600 print:text-black'
+                                    (transactions.reduce((acc, t) => {
+                                        if (isIncomeType(t.type)) return acc + t.amount;
+                                        if (isExpenseType(t.type)) return acc - t.amount;
+                                        return acc;
+                                    }, 0)) >= 0 ? 'text-green-600 print:text-black' : 'text-red-600 print:text-black'
                                 }>
                                     {formatCurrency(transactions.reduce((acc, t) => {
-                                        if (t.type === TransactionType.INCOME) return acc + t.amount;
-                                        return acc - t.amount;
+                                        if (isIncomeType(t.type)) return acc + t.amount;
+                                        if (isExpenseType(t.type)) return acc - t.amount;
+                                        return acc;
                                     }, 0))}
                                 </span>
                             </div>
@@ -600,7 +616,7 @@ export const Reports: React.FC = () => {
 
                         <div className="flex-1 overflow-y-auto p-6">
                             <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-                                {CHART_OF_ACCOUNTS.filter(c => !c.isHeader).map(cat => {
+                                {chartOfAccounts.filter(c => !c.isHeader).map(cat => {
                                     const val = tempBudget.find(b => b.code === cat.code)?.monthlyBudget || 0;
                                     return (
                                         <div key={cat.code} className="flex justify-between items-center border-b border-gray-100 pb-2">

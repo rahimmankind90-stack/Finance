@@ -2,7 +2,14 @@ export enum TransactionType {
   INCOME = 'INCOME',
   EXPENSE = 'EXPENSE',
   ADV = 'ADV',
-  TRF = 'TRF'
+  TRF = 'TRF',
+  NB = 'NB',
+  CONT = 'CONT',
+  ITAX = 'ITAX',
+  SSEC = 'SSEC',
+  WHT = 'WHT',
+  PCA = 'PCA',
+  OPENING = 'OPENING'
 }
 
 export enum TransactionStatus {

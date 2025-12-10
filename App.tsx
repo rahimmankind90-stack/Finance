@@ -6,6 +6,7 @@ import { Ledger } from './pages/Ledger';
 import { Reconciliation } from './pages/Reconciliation';
 import { ApAr } from './pages/ApAr';
 import { Reports } from './pages/Reports';
+import { Settings } from './pages/Settings';
 import { FinanceProvider } from './context/FinanceContext';
 
 const App: React.FC = () => {
@@ -19,6 +20,7 @@ const App: React.FC = () => {
               <Route path="/reconciliation" element={<Reconciliation />} />
               <Route path="/ap-ar" element={<ApAr />} />
               <Route path="/reports" element={<Reports />} />
+              <Route path="/settings" element={<Settings />} />
             </Routes>
           </Layout>
         </Router>

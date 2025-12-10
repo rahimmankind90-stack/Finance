@@ -1,14 +1,17 @@
 import React, { useState, useMemo } from 'react';
 import { useFinance } from '../context/FinanceContext';
-import { CHART_OF_ACCOUNTS } from '../constants';
 import { Transaction, TransactionType, TransactionStatus } from '../types';
 import { categorizeTransaction } from '../services/geminiService';
 
 export const Ledger: React.FC = () => {
-  const { transactions, addTransaction, deleteTransaction, updateTransaction } = useFinance();
+  const { transactions, addTransaction, deleteTransaction, updateTransaction, overwriteTransactions, chartOfAccounts } = useFinance();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Close Period State
+  const [isClosePeriodModalOpen, setIsClosePeriodModalOpen] = useState(false);
+  const [closeDate, setCloseDate] = useState(new Date().toISOString().split('T')[0]);
 
   // Undo State
   const [deletedTx, setDeletedTx] = useState<Transaction | null>(null);
@@ -107,13 +110,65 @@ export const Ledger: React.FC = () => {
       window.location.reload();
   };
 
+  const handleClosePeriod = () => {
+      const cutoff = new Date(closeDate);
+      
+      // 1. Identify transactions to archive (before cutoff)
+      const toArchive = transactions.filter(t => new Date(t.date) < cutoff);
+      const toKeep = transactions.filter(t => new Date(t.date) >= cutoff);
+
+      if (toArchive.length === 0) {
+          alert("No transactions found before this date.");
+          return;
+      }
+
+      // 2. Calculate carry forward balance
+      const carryForwardBalance = toArchive.reduce((acc, t) => {
+        if (t.type === TransactionType.INCOME || t.type === TransactionType.CONT || t.type === TransactionType.OPENING) {
+            return acc + t.amount;
+        }
+        return acc - t.amount;
+      }, 0);
+
+      // 3. Create Archive CSV
+      const headers = ['Date', 'Voucher', 'Type', 'Category', 'Description', 'Amount', 'Status'];
+      const rows = toArchive.map(t => [t.date, t.voucherNumber, t.type, t.accountCode, `"${t.description}"`, t.amount, t.status]);
+      const csvContent = "data:text/csv;charset=utf-8," + headers.join(",") + "\n" + rows.map(e => e.join(",")).join("\n");
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `ledger_archive_${closeDate}.csv`);
+      document.body.appendChild(link);
+      link.click();
+
+      // 4. Create Opening Balance Transaction
+      const openingTx: Transaction = {
+          id: crypto.randomUUID(),
+          date: closeDate,
+          voucherNumber: 'OPEN-BAL',
+          description: 'Opening Balance (Carried Forward)',
+          payeeOrPayer: 'System',
+          amount: carryForwardBalance,
+          type: TransactionType.OPENING,
+          accountCode: 'OPENING',
+          status: TransactionStatus.CLEARED,
+          activity: 'Period Close'
+      };
+
+      // 5. Update State
+      overwriteTransactions([openingTx, ...toKeep]);
+      setIsClosePeriodModalOpen(false);
+      alert(`Period closed. ${toArchive.length} transactions archived. New Opening Balance: ${formatCurrency(carryForwardBalance)}`);
+  };
+
   const handleSmartCategorize = async () => {
     if (!formData.description) return;
     setIsSuggesting(true);
-    const suggestedCode = await categorizeTransaction(formData.description);
+    // Pass current dynamic chart of accounts to service
+    const suggestedCode = await categorizeTransaction(formData.description, chartOfAccounts);
     if (suggestedCode) {
       const code = suggestedCode.split(':')[0].trim();
-      const exists = CHART_OF_ACCOUNTS.find(c => c.code === code);
+      const exists = chartOfAccounts.find(c => c.code === code);
       if (exists) {
         setFormData(prev => ({ ...prev, accountCode: code }));
       }
@@ -161,7 +216,7 @@ export const Ledger: React.FC = () => {
     closeModal();
   };
 
-  const filteredAccounts = CHART_OF_ACCOUNTS.filter(c => !c.isHeader);
+  const filteredAccounts = chartOfAccounts.filter(c => !c.isHeader);
 
   // Calculate Running Balance and Apply Filters
   const transactionsWithBalance = useMemo(() => {
@@ -171,10 +226,10 @@ export const Ledger: React.FC = () => {
     // 2. Calculate running balance on the full sorted list FIRST
     let balance = 0;
     const withBalance = sorted.map(t => {
-      if (t.type === TransactionType.INCOME) {
+      if (t.type === TransactionType.INCOME || t.type === TransactionType.CONT || t.type === TransactionType.OPENING) {
         balance += t.amount;
       } else {
-        // Expense, ADV, TRF all reduce balance
+        // Expense, ADV, TRF, NB, etc. all reduce balance
         balance -= t.amount;
       }
       return { ...t, runningBalance: balance };
@@ -182,7 +237,7 @@ export const Ledger: React.FC = () => {
 
     // 3. Apply filters
     return withBalance.filter(tx => {
-       const categoryName = CHART_OF_ACCOUNTS.find(c => c.code === tx.accountCode)?.category || '';
+       const categoryName = chartOfAccounts.find(c => c.code === tx.accountCode)?.category || '';
        
        // Specific Column Filters
        const matchesVoucher = tx.voucherNumber.toLowerCase().includes(filters.voucher.toLowerCase());
@@ -200,7 +255,7 @@ export const Ledger: React.FC = () => {
 
        return matchesVoucher && matchesActivity && matchesClause && matchesCategory && matchesSearch;
     });
-  }, [transactions, filters, searchQuery]);
+  }, [transactions, filters, searchQuery, chartOfAccounts]);
 
   return (
     <div className="space-y-6 relative">
@@ -234,10 +289,16 @@ export const Ledger: React.FC = () => {
                 </svg>
              </div>
             <button
-            onClick={() => setIsModalOpen(true)}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-sm transition-colors text-sm font-medium flex items-center gap-2 whitespace-nowrap"
+                onClick={() => setIsClosePeriodModalOpen(true)}
+                className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg shadow-sm transition-colors text-sm font-medium whitespace-nowrap"
             >
-            <span>+ New Transaction</span>
+                Start New Month
+            </button>
+            <button
+                onClick={() => setIsModalOpen(true)}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-sm transition-colors text-sm font-medium flex items-center gap-2 whitespace-nowrap"
+            >
+                <span>+ New Transaction</span>
             </button>
         </div>
       </div>
@@ -285,8 +346,9 @@ export const Ledger: React.FC = () => {
                  <tr><td colSpan={11} className="text-center py-8 text-gray-400">No matching transactions found.</td></tr>
               ) : (
                 transactionsWithBalance.map((tx) => {
-                    const categoryName = CHART_OF_ACCOUNTS.find(c => c.code === tx.accountCode)?.category || 'Unknown';
-                    const isExpenseType = tx.type === TransactionType.EXPENSE || tx.type === TransactionType.ADV || tx.type === TransactionType.TRF;
+                    const categoryName = chartOfAccounts.find(c => c.code === tx.accountCode)?.category || 'Unknown';
+                    const isIncome = tx.type === TransactionType.INCOME || tx.type === TransactionType.CONT || tx.type === TransactionType.OPENING;
+                    const isOpening = tx.type === TransactionType.OPENING;
                     return (
                       <tr key={tx.id} className="hover:bg-gray-50 group">
                         <td className="px-3 py-3 text-gray-700 whitespace-nowrap">{tx.date}</td>
@@ -297,17 +359,18 @@ export const Ledger: React.FC = () => {
                         <td className="px-3 py-3 text-gray-600 text-xs">{categoryName}</td>
                         <td className="px-3 py-3 text-gray-700 font-medium">
                             {tx.description}
-                            {(tx.type === TransactionType.ADV || tx.type === TransactionType.TRF) && (
+                            {/* Badges for special types */}
+                            {tx.type !== TransactionType.EXPENSE && tx.type !== TransactionType.INCOME && (
                                 <span className="ml-2 text-[10px] bg-gray-100 text-gray-600 px-1 rounded border border-gray-200">
                                     {tx.type}
                                 </span>
                             )}
                         </td>
                         <td className="px-3 py-3 text-right font-mono text-gray-700">
-                            {isExpenseType ? formatCurrency(tx.amount) : '-'}
+                            {!isIncome ? formatCurrency(tx.amount) : '-'}
                         </td>
                         <td className="px-3 py-3 text-right font-mono text-gray-700">
-                            {tx.type === TransactionType.INCOME ? formatCurrency(tx.amount) : '-'}
+                            {isIncome && !isOpening ? formatCurrency(tx.amount) : '-'}
                         </td>
                         <td className={`px-3 py-3 text-right font-mono font-bold whitespace-nowrap ${tx.runningBalance >= 0 ? 'text-green-700' : 'text-red-700'}`}>
                             {formatCurrency(tx.runningBalance)}
@@ -357,6 +420,34 @@ export const Ledger: React.FC = () => {
           </div>
       )}
 
+      {/* Close Period / Start New Month Modal */}
+      {isClosePeriodModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+                <h3 className="text-lg font-bold text-gray-800 mb-2">Start New Month Ledger</h3>
+                <p className="text-sm text-gray-600 mb-4">
+                    This will archive all transactions before the selected date and create a new Opening Balance transaction.
+                    Your old data will be downloaded as a CSV.
+                </p>
+                <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Start Date for New Ledger</label>
+                    <input 
+                        type="date" 
+                        value={closeDate} 
+                        onChange={(e) => setCloseDate(e.target.value)} 
+                        className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                </div>
+                <div className="flex justify-end gap-3">
+                    <button onClick={() => setIsClosePeriodModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+                    <button onClick={handleClosePeriod} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 shadow-sm">
+                        Archive & Start New
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
       {/* Add/Edit Transaction Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
@@ -380,8 +471,15 @@ export const Ledger: React.FC = () => {
                   <select name="type" value={formData.type} onChange={handleInputChange} className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none">
                     <option value={TransactionType.EXPENSE}>Expense (Total Cost)</option>
                     <option value={TransactionType.INCOME}>Income (Deposit)</option>
+                    <option value={TransactionType.NB}>NB (Non-billable)</option>
                     <option value={TransactionType.ADV}>ADV (Advance)</option>
+                    <option value={TransactionType.CONT}>CONT (Contribution)</option>
                     <option value={TransactionType.TRF}>TRF (Transfer)</option>
+                    <option value={TransactionType.ITAX}>ITAX (Income Tax)</option>
+                    <option value={TransactionType.SSEC}>SSEC (Social Security)</option>
+                    <option value={TransactionType.WHT}>WHT (Withholding Tax)</option>
+                    <option value={TransactionType.PCA}>PCA (Petty Cash Advance)</option>
+                    <option value={TransactionType.OPENING}>Opening Balance</option>
                   </select>
                 </div>
               </div>

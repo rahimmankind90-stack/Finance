@@ -1,12 +1,12 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { CHART_OF_ACCOUNTS } from "../constants";
+import { ChartOfAccountItem } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
 
 // Helper to check if API key is set
 const isApiKeyAvailable = (): boolean => !!process.env.API_KEY;
 
-export const categorizeTransaction = async (description: string): Promise<string | null> => {
+export const categorizeTransaction = async (description: string, accounts: ChartOfAccountItem[]): Promise<string | null> => {
   if (!isApiKeyAvailable()) {
     console.warn("Gemini API key not found. Skipping smart categorization.");
     return null;
@@ -14,8 +14,8 @@ export const categorizeTransaction = async (description: string): Promise<string
 
   const model = "gemini-2.5-flash";
   
-  // Create a simplified list of codes for the model
-  const codes = CHART_OF_ACCOUNTS.filter(c => !c.isHeader).map(c => `${c.code}: ${c.category}`).join("\n");
+  // Create a simplified list of codes for the model from the passed accounts
+  const codes = accounts.filter(c => !c.isHeader).map(c => `${c.code}: ${c.category}`).join("\n");
 
   const prompt = `
     You are an accounting assistant. Given the following Chart of Accounts:

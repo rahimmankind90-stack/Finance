@@ -1,20 +1,26 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# IA Finance App
 
-# Run and deploy your AI Studio app
+A comprehensive financial management system for NGOs featuring transaction tracking, chart of accounts categorization, bank reconciliation, and financial reporting.
 
-This contains everything you need to run your app locally.
+## Key Features
 
-View your app in AI Studio: https:https://aistudio.google.com/apps/drive/1cMydV2UIkmMUOgKbJ9mRzZog4r_yEjiw?showPreview=true&showAssistant=true
+- **Dashboard**: Real-time financial overview.
+- **General Ledger**: Manage daily transactions (Expenses, Income, Advances, etc.).
+- **Reconciliation**: Match bank statements with ledger entries.
+- **Reports**: Generate budget variance, income statements, and trial balances.
+- **AI Integration**: Smart categorization and analysis.
+- **AP/AR**: Track Payables (bills) and Receivables (advances).
 
-## Run Locally
+## Tech Stack
 
-**Prerequisites:**  Node.js
+- React 18
+- TypeScript
+- Tailwind CSS
+- Recharts
+- Google GenAI SDK
 
+## Getting Started
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+1. Clone the repository
+2. Install dependencies: `npm install`
+3. Run the development server: `npm start`
