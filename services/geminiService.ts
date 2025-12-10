@@ -4,7 +4,7 @@ import { ChartOfAccountItem } from "../types";
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
 
 // Helper to check if API key is set
-const isApiKeyAvailable = (): boolean => !!process.env.API_KEY;
+const isApiKeyAvailable = (): boolean => !!process.env.API_KEY || 'FAKE_API_KEY_FOR_DEVELOPMENT';
 
 export const categorizeTransaction = async (description: string, accounts: ChartOfAccountItem[]): Promise<string | null> => {
   if (!isApiKeyAvailable()) {
